@@ -31,21 +31,26 @@ class ImageDataset(Dataset):
         pixel = self.pixel_values[idx]
         return coord, pixel
 
+class Sine(nn.Module):
+    def forward(self, x):
+        return torch.sin(x)
+    
 class INRModel(nn.Module):
     def __init__(self, input_dim=2, output_dim=3, hidden_dim=256, num_layers=4, dropout_rate=0.5):
         super().__init__()
         
         layers = []
+        
         # First layer
         layers.append(nn.Linear(input_dim, hidden_dim))
-        layers.append(nn.ReLU())
+        layers.append(Sine())  # Use SIREN activation function
         layers.append(nn.BatchNorm1d(hidden_dim))
         layers.append(nn.Dropout(dropout_rate))
         
         # Hidden layers
         for _ in range(num_layers - 2):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(nn.ReLU())
+            layers.append(Sine())  # Use SIREN activation function
             layers.append(nn.BatchNorm1d(hidden_dim))
             layers.append(nn.Dropout(dropout_rate))
         
@@ -54,6 +59,15 @@ class INRModel(nn.Module):
         layers.append(nn.Sigmoid())  # Ensure output is in [0, 1] range since the rgb values are normalized
         
         self.network = nn.Sequential(*layers)
+        self.init_weights()
+
+    def init_weights(self):
+        for m in self.network:
+            if isinstance(m, nn.Linear):
+                if isinstance(m, Sine):
+                    m.weight.data.uniform_(-np.sqrt(6 / m.in_features), np.sqrt(6 / m.in_features))
+                else:
+                    m.weight.data.uniform_(-np.sqrt(6 / m.in_features), np.sqrt(6 / m.in_features))
     
     def forward(self, x):
         return self.network(x)

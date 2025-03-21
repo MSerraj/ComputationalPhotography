@@ -6,6 +6,7 @@ import torch.optim as optim
 from tqdm import tqdm
 
 
+
 def normalize_image(image, mean, std):
     normalized_image = (image - mean) / std
     return normalized_image
@@ -17,6 +18,7 @@ def get_normalized_coordinates(h, w):
     X, Y = np.meshgrid(x, y)
     coords = np.stack([X, Y], axis=-1)  # [h, w, 2]
     return coords.reshape(-1, 2)  # Flatten to [h*w, 2]
+
 
 class ImageDataset(Dataset):
     def __init__(self, coordinates, pixel_values):
@@ -32,7 +34,7 @@ class ImageDataset(Dataset):
         return coord, pixel
 
 class SineLayer(nn.Module):
-    def __init__(self, in_features, out_features, bias=True, is_first=False, omega_0=30):
+    def __init__(self, in_features, out_features, bias=True, is_first=False, omega_0=10):
         super().__init__()
         self.omega_0 = omega_0
         self.is_first = is_first
@@ -51,7 +53,7 @@ class SineLayer(nn.Module):
         return torch.sin(self.omega_0 * self.linear(input))
     
 class INRModel(nn.Module):
-    def __init__(self, input_dim=2, output_dim=3, hidden_dim=256, num_layers=4, first_omega_0=30, hidden_omega_0=30, outermost_linear=False):
+    def __init__(self, input_dim=2, output_dim=3, hidden_dim=256, num_layers=4, first_omega_0=10, hidden_omega_0=10, outermost_linear=False):
         super().__init__()
 
         self.net = []
@@ -72,6 +74,8 @@ class INRModel(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+    
+
     
     def train_model(self, dataloader, num_epochs = 100, lr = 1e-3, device = 'cpu' if not torch.cuda.is_available() else 'cuda', criterion = nn.MSELoss(), optimizer = None):
         if optimizer is None:

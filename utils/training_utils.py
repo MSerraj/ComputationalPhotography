@@ -196,8 +196,9 @@ def pixel_coordinates_normalized(image, downsize_factor):
     high_res_pixel_values = high_res_image.reshape(-1, 3)
 
     # Downsample the image for training
-    resized_image = cv.resize(image, (y // downsize_factor, x // downsize_factor))
-    resized_x, resized_y = resized_image.shape[:2]
+    resized_x = int(x / downsize_factor)
+    resized_y = int(y / downsize_factor)
+    resized_image = cv.resize(image, (resized_y, resized_x))
     print(f"The downsampled image has shape: {resized_image.shape}")
 
     # Generate low-resolution coordinates for training

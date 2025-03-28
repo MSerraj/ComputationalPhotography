@@ -36,9 +36,9 @@ class BabySINE(nn.Module):
                  input_dim=2, 
                  output_dim=3,
                  hidden_dim=256,
-                 num_layers=4,
+                 num_layers=3,
                  omega_0=30,
-                 sigma=10.0,
+                 sigma=1.0,
                  use_dropout=False,
                  dropout_rate=0.1):
         super().__init__()
@@ -97,7 +97,9 @@ class BabySINE(nn.Module):
                     lr=1e-4, 
                     device=None,
                     criterion=nn.MSELoss(),
-                    sigma=10.0):
+                    sigma=10.0,
+                    scheduler_step_size=50,
+                    scheduler_gamma=0.5):
         # Automatically detect the device (MPS for macOS, CUDA for Windows/Linux, or CPU)
         if device is None:
             device = torch.device(
@@ -108,6 +110,7 @@ class BabySINE(nn.Module):
         print(f"Using device: {device}")
         
         optimizer = optim.Adam(self.parameters(), lr=lr)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma)
         self.train()
         self.to(device)
         
@@ -130,6 +133,12 @@ class BabySINE(nn.Module):
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+            # Scheduler step
+            scheduler.step()
+            # Print learning rate
+            for param_group in optimizer.param_groups:
+                print(f"Learning rate: {param_group['lr']}")
+                
             
             avg_loss = total_loss / len(dataloader)
             losses.append(avg_loss)
@@ -162,24 +171,6 @@ def load_image(data_folder, img_file_path):
 
     return img_np_original, height_target, width_target, channels
     
-# def pixel_coordinates_normalized(image, downsize_factor): 
-#     """Generate normalized coordinates and pixel values for a downsampled image."""
-#     print(f"The original image has shape: {image.shape}")
-#     x, y = image.shape[:2]
-#     resized_image = cv.resize(image, (y // downsize_factor, x // downsize_factor))
-#     resized_x, resized_y = resized_image.shape[:2]
-#     xs = np.linspace(0, 1, resized_x)  # x coordinates (0 to 1)
-#     ys = np.linspace(0, 1, resized_y)  # y coordinates (0 to 1)
-
-#     xx, yy = np.meshgrid(xs, ys, indexing="ij")
-#     coordinates = np.stack((xx, yy), axis=-1)
-#     coordinates = coordinates.reshape(-1, 2) 
-#     resized_image = resized_image / 255.0
-#     norm_resized_image = (resized_image - np.mean(resized_image)) / np.std(resized_image)
-#     pixel_values = norm_resized_image.reshape(-1, 3)
-    
-#     return coordinates, pixel_values, norm_resized_image, resized_x, resized_y
-
 def pixel_coordinates_normalized(image, downsize_factor): 
     """Generate normalized coordinates and pixel values for a downsampled image."""
     print(f"The original image has shape: {image.shape}")

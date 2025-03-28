@@ -191,9 +191,14 @@ def pixel_coordinates_normalized(image, downsize_factor):
     xx_hr, yy_hr = np.meshgrid(xs_hr, ys_hr, indexing="ij")
     high_res_coordinates = np.stack((xx_hr, yy_hr), axis=-1).reshape(-1, 2)
 
+    # Normalize pixel values for the high-resolution image
+    high_res_image = image / 255.0
+    high_res_pixel_values = high_res_image.reshape(-1, 3)
+
     # Downsample the image for training
     resized_image = cv.resize(image, (y // downsize_factor, x // downsize_factor))
     resized_x, resized_y = resized_image.shape[:2]
+    print(f"The downsampled image has shape: {resized_image.shape}")
 
     # Generate low-resolution coordinates for training
     xs_lr = np.linspace(-1, 1, resized_x)  # x coordinates (-1 to 1)
@@ -202,12 +207,17 @@ def pixel_coordinates_normalized(image, downsize_factor):
     low_res_coordinates = np.stack((xx_lr, yy_lr), axis=-1).reshape(-1, 2)
 
     # Normalize pixel values for the low-resolution image
-    resized_image = resized_image / 255.0
-    norm_resized_image = (resized_image - np.mean(resized_image)) / np.std(resized_image)
-    pixel_values = norm_resized_image.reshape(-1, 3)
+    low_res_image = resized_image / 255.0
+    low_res_pixel_values = low_res_image.reshape(-1, 3)
 
-    return low_res_coordinates, pixel_values, norm_resized_image, resized_x, resized_y, high_res_coordinates
-
+    return (
+        low_res_coordinates, 
+        low_res_pixel_values, 
+        high_res_coordinates, 
+        high_res_pixel_values, 
+        (resized_x, resized_y), 
+        (x, y)
+    )
 def plot_image(image, title=None):
     """Plot an image with optional title."""
     plt.figure(figsize=(10, 10))

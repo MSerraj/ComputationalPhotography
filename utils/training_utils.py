@@ -9,18 +9,33 @@ from PIL import Image
 import cv2 as cv
 
 
-class ImageDataset(Dataset):
-    def __init__(self, coordinates, pixel_values):
-        self.coordinates = coordinates.astype(np.float32)
-        self.pixel_values = pixel_values.astype(np.float32)
+class ImageFitting(Dataset):
+    def __init__(self, image_path, H, W):
+        super().__init__()
+        img = Image.open(image_path)
+        transform = transforms.Compose([
+            transforms.Resize((H, W)),
+            transforms.ToTensor(),
+        ])
+        img = transform(img) * 2. - 1.  # Normalize to [-1, 1]
+        self.pixels = img.permute(1, 2, 0).contiguous().view(-1, 3)
+        self.coords = self.get_mgrid(H, W)
 
     def __len__(self):
-        return len(self.coordinates)
+        return 1
 
     def __getitem__(self, idx):
-        coord = self.coordinates[idx]
-        pixel = self.pixel_values[idx]
-        return coord, pixel
+        if idx > 0:
+            raise IndexError
+        return self.coords, self.pixels
+
+    @staticmethod
+    def get_mgrid(H, W):
+        """Generate a 2D grid of normalized coordinates."""
+        x = torch.linspace(-1, 1, steps=W)
+        y = torch.linspace(-1, 1, steps=H)
+        grid = torch.stack(torch.meshgrid(y, x), dim=-1)
+        return grid.view(-1, 2)
     
     
 class Sine(nn.Module):
@@ -31,132 +46,101 @@ class Sine(nn.Module):
     def forward(self, x):
         return torch.sin(self.omega_0 * x)
 
-class BabySINE(nn.Module):
-    def __init__(self, 
-                 input_dim=2, 
-                 output_dim=3,
-                 hidden_dim=1024,
-                 num_layers=3,
-                 omega_0=30,
-                 sigma=1.0,
-                 use_dropout=False,
-                 dropout_rate=0.1):
+class SineLayer(nn.Module):
+    def __init__(self, in_features, out_features, bias=True, is_first=False, omega_0=30):
         super().__init__()
-        self.sigma = sigma
         self.omega_0 = omega_0
-        
-        layers = []
-        # Input layer with sine activation
-        layers.append(nn.Linear(input_dim, hidden_dim))
-        layers.append(Sine(omega_0))
-        
-        # Hidden layers
-        for _ in range(num_layers - 2):
-            layers.append(nn.Linear(hidden_dim, hidden_dim))
-            layers.append(Sine())
-            if use_dropout:
-                layers.append(nn.Dropout(dropout_rate))
-        
-        # Final output layer
-        layers.append(nn.Linear(hidden_dim, output_dim))
-        layers.append(nn.Sigmoid())  # Keep output in [0,1] for RGB
-        
-        self.network = nn.Sequential(*layers)
-        self._initialize_weights()
+        self.is_first = is_first
+        self.in_features = in_features
+        self.linear = nn.Linear(in_features, out_features, bias=bias)
+        self.init_weights()
 
-    def _initialize_weights(self):
-        """SIREN-style weight initialization"""
+    def init_weights(self):
         with torch.no_grad():
-            for idx, layer in enumerate(self.network):
-                if isinstance(layer, nn.Linear):
-                    # Calculate fan_in
-                    fan_in = layer.weight.size(1)
-                    
-                    # First layer initialization
-                    if idx == 0:  # First linear layer
-                        bound = 1 / fan_in
-                    else:
-                        # bound = torch.sqrt(torch.tensor(6.0 / fan_in)) / self.omega_0
-                        bound = torch.sqrt(torch.tensor(6.0 / fan_in, device=layer.weight.device)) / self.omega_0
+            if self.is_first:
+                self.linear.weight.uniform_(-1 / self.in_features, 1 / self.in_features)
+            else:
+                self.linear.weight.uniform_(
+                    -np.sqrt(6 / self.in_features) / self.omega_0,
+                    np.sqrt(6 / self.in_features) / self.omega_0
+                )
 
-                    # Uniform initialization
-                    nn.init.uniform_(layer.weight, -bound, bound)
-                    nn.init.zeros_(layer.bias)
+    def forward(self, input):
+        return torch.sin(self.omega_0 * self.linear(input))
 
-    def forward(self, x, sigma=None):
-        """Forward pass with optional sigma scaling"""
-        if sigma is None:
-            sigma = self.sigma
-        # Scale input coordinates by sigma
-        x = x * sigma
-        return self.network(x)
+    def forward_with_intermediate(self, input):
+        # For visualization of activation distributions
+        intermediate = self.omega_0 * self.linear(input)
+        return torch.sin(intermediate), intermediate
 
-    def train_model(self, 
-                    dataloader, 
-                    num_epochs=100, 
-                    lr=1e-4, 
-                    device=None,
-                    criterion=nn.L1Loss(),
-                    sigma=10.0,
-                    scheduler_step_size=50,
-                    scheduler_gamma=0.5):
-        # Automatically detect the device (MPS for macOS, CUDA for Windows/Linux, or CPU)
-        if device is None:
-            device = torch.device(
-                "mps" if torch.backends.mps.is_available() else
-                "cuda" if torch.cuda.is_available() else
-                "cpu"
-            )
-        print(f"Using device: {device}")
-        
-        optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay = 1e-5, amsgrad=True)
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma)
-        self.train()
-        self.to(device)
-        
-        losses = []
-        scheduler_values = []
-        for epoch in tqdm(range(num_epochs)):
-            total_loss = 0
-            
-            for batch_coords, batch_pixels in dataloader:
-                batch_coords = batch_coords.to(device)
-                batch_pixels = batch_pixels.to(device)
-                
-                # Forward pass with sigma scaling
-                pred_pixels = self(batch_coords, sigma)
-                
-                # Compute loss
-                loss = criterion(pred_pixels, batch_pixels)
-                total_loss += loss.item()
-                
-                # Backpropagation
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-            # Store previous learning rate
-            prev_lr = scheduler.get_last_lr()[0]
 
-            # Scheduler step
-            scheduler.step()
+class Siren(nn.Module):
+    def __init__(self, in_features, hidden_features, hidden_layers, out_features, outermost_linear=False,
+                 first_omega_0=30, hidden_omega_0=30.):
+        super().__init__()
+        self.net = []
+        self.net.append(SineLayer(in_features, hidden_features, is_first=True, omega_0=first_omega_0))
 
-            # Get new learning rate
-            current_lr = scheduler.get_last_lr()[0]
-            scheduler_values.append(current_lr)
+        for i in range(hidden_layers):
+            self.net.append(SineLayer(hidden_features, hidden_features, is_first=False, omega_0=hidden_omega_0))
 
-            # Print learning rate only if it changes
-            if epoch == 0 or current_lr != prev_lr:
-                print(f"Learning rate: {current_lr}")
-                
-            
-            avg_loss = total_loss / len(dataloader)
-            losses.append(avg_loss)
-            
-            if epoch % 100 == 0:
-                print(f"Epoch {epoch}, Loss: {avg_loss:.6f}")
-                print(f"Epoch {epoch}: Predicted pixel values range: {pred_pixels.min().item()}, {pred_pixels.max().item()}")
-        
-        return losses, scheduler_values
+        if outermost_linear:
+            final_linear = nn.Linear(hidden_features, out_features)
+            with torch.no_grad():
+                final_linear.weight.uniform_(
+                    -np.sqrt(6 / hidden_features) / hidden_omega_0,
+                    np.sqrt(6 / hidden_features) / hidden_omega_0
+                )
+            self.net.append(final_linear)
+        else:
+            self.net.append(SineLayer(hidden_features, out_features, is_first=False, omega_0=hidden_omega_0))
+
+        self.net = nn.Sequential(*self.net)
+
+    def forward(self, coords):
+        coords = coords.clone().detach().requires_grad_(True)  # Allows to take derivative w.r.t. input
+        output = self.net(coords)
+        return output, coords
+
+    def forward_with_activations(self, coords, retain_grad=False):
+        '''Returns not only model output, but also intermediate activations.
+        Only used for visualizing activations later!'''
+        activations = OrderedDict()
+        activation_count = 0
+        x = coords.clone().detach().requires_grad_(True)
+        activations['input'] = x
+        for i, layer in enumerate(self.net):
+            if isinstance(layer, SineLayer):
+                x, intermed = layer.forward_with_intermediate(x)
+                if retain_grad:
+                    x.retain_grad()
+                    intermed.retain_grad()
+                activations['_'.join((str(layer.__class__), "%d" % activation_count))] = intermed
+                activation_count += 1
+            else:
+                x = layer(x)
+                if retain_grad:
+                    x.retain_grad()
+                activations['_'.join((str(layer.__class__), "%d" % activation_count))] = x
+                activation_count += 1
+        return activations
+    
+def gradient(y, x, grad_outputs=None):
+    if grad_outputs is None:
+        grad_outputs = torch.ones_like(y)
+    grad = torch.autograd.grad(y, [x], grad_outputs=grad_outputs, create_graph=True)[0]
+    return grad
+
+
+def divergence(y, x):
+    div = 0.
+    for i in range(y.shape[-1]):
+        div += torch.autograd.grad(y[..., i], x, torch.ones_like(y[..., i]), create_graph=True)[0][..., i:i+1]
+    return div
+
+def laplace(y, x):
+    grad = gradient(y, x)
+    return divergence(grad, x)
     
 def list_png_files(data_folder):
     """List all PNG files in the specified folder."""
@@ -231,3 +215,44 @@ def plot_image(image, title=None):
     # Get image dimensions
     height_target, width_target, channels = image.shape
     print(f"Image dimensions: {height_target}x{width_target}, {channels} channels")
+    
+    
+def train_siren(model, dataloader, total_steps=5000, steps_til_summary=250, lr=1e-4, device=None):
+    """
+    Train the Siren model.
+
+    Args:
+        model (Siren): The Siren model.
+        dataloader (DataLoader): DataLoader for the dataset.
+        total_steps (int): Total number of training steps.
+        steps_til_summary (int): Steps between summaries.
+        lr (float): Learning rate.
+        device (torch.device): Device to use for training.
+    """
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+
+    optim = torch.optim.Adam(lr=lr, params=model.parameters())
+    model_input, ground_truth = next(iter(dataloader))
+    model_input, ground_truth = model_input.to(device), ground_truth.to(device)
+
+    H, W = int(np.sqrt(len(ground_truth))), int(np.sqrt(len(ground_truth)))
+
+    for step in range(total_steps):
+        model_output, coords = model(model_input)
+        loss = ((model_output - ground_truth) ** 2).mean()
+
+        if not step % steps_til_summary:
+            print(f"Step {step}, Total loss {loss.item():0.6f}")
+            with torch.no_grad():
+                output_view = model_output.view(H, W, 3)
+                output_view = torch.clamp(output_view, -1, 1) * 0.5 + 0.5
+                output_view = (output_view * 255).to(torch.uint8).cpu().detach().numpy()
+                plt.imshow(output_view)
+                plt.axis("off")
+                plt.show()
+
+        optim.zero_grad()
+        loss.backward()
+        optim.step()

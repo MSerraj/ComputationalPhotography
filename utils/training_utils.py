@@ -59,7 +59,7 @@ class BabySINE(nn.Module):
         
         # Final output layer
         layers.append(nn.Linear(hidden_dim, output_dim))
-        layers.append(nn.Sigmoid())  # Keep output in [0,1] for RGB
+        layers.append(nn.Tanh())  # Keep output in [0,1] for RGB
         
         self.network = nn.Sequential(*layers)
         self._initialize_weights()
@@ -96,7 +96,7 @@ class BabySINE(nn.Module):
                     num_epochs=100, 
                     lr=1e-4, 
                     device=None,
-                    criterion=nn.MSELoss(),
+                    criterion=nn.L1Loss(),
                     sigma=10.0,
                     scheduler_step_size=50,
                     scheduler_gamma=0.5):
@@ -109,12 +109,13 @@ class BabySINE(nn.Module):
             )
         print(f"Using device: {device}")
         
-        optimizer = optim.Adam(self.parameters(), lr=lr)
+        optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay = 1e-5, amsgrad=True)
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma)
         self.train()
         self.to(device)
         
         losses = []
+        scheduler_values = []
         for epoch in tqdm(range(num_epochs)):
             total_loss = 0
             
@@ -133,20 +134,29 @@ class BabySINE(nn.Module):
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+            # Store previous learning rate
+            prev_lr = scheduler.get_last_lr()[0]
+
             # Scheduler step
             scheduler.step()
-            # Print learning rate
-            for param_group in optimizer.param_groups:
-                print(f"Learning rate: {param_group['lr']}")
+
+            # Get new learning rate
+            current_lr = scheduler.get_last_lr()[0]
+            scheduler_values.append(current_lr)
+
+            # Print learning rate only if it changes
+            if epoch == 0 or current_lr != prev_lr:
+                print(f"Learning rate: {current_lr}")
                 
             
             avg_loss = total_loss / len(dataloader)
             losses.append(avg_loss)
             
-            if epoch % 10 == 0:
+            if epoch % 100 == 0:
                 print(f"Epoch {epoch}, Loss: {avg_loss:.6f}")
+                print(f"Epoch {epoch}: Predicted pixel values range: {pred_pixels.min().item()}, {pred_pixels.max().item()}")
         
-        return losses
+        return losses, scheduler_values
     
 def list_png_files(data_folder):
     """List all PNG files in the specified folder."""

@@ -35,7 +35,7 @@ class BabySINE(nn.Module):
     def __init__(self, 
                  input_dim=2, 
                  output_dim=3,
-                 hidden_dim=256,
+                 hidden_dim=1024,
                  num_layers=3,
                  omega_0=30,
                  sigma=1.0,
@@ -59,7 +59,7 @@ class BabySINE(nn.Module):
         
         # Final output layer
         layers.append(nn.Linear(hidden_dim, output_dim))
-        layers.append(nn.Tanh())  # Keep output in [0,1] for RGB
+        layers.append(nn.Sigmoid())  # Keep output in [0,1] for RGB
         
         self.network = nn.Sequential(*layers)
         self._initialize_weights()

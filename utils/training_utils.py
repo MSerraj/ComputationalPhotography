@@ -6,6 +6,7 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from PIL import Image
+from torchvision import transforms
 import cv2 as cv
 
 
@@ -37,14 +38,6 @@ class ImageFitting(Dataset):
         grid = torch.stack(torch.meshgrid(y, x), dim=-1)
         return grid.view(-1, 2)
     
-    
-class Sine(nn.Module):
-    def __init__(self, omega_0=30):
-        super().__init__()
-        self.omega_0 = omega_0
-        
-    def forward(self, x):
-        return torch.sin(self.omega_0 * x)
 
 class SineLayer(nn.Module):
     def __init__(self, in_features, out_features, bias=True, is_first=False, omega_0=30):
@@ -217,7 +210,7 @@ def plot_image(image, title=None):
     print(f"Image dimensions: {height_target}x{width_target}, {channels} channels")
     
     
-def train_siren(model, dataloader, total_steps=5000, steps_til_summary=250, lr=1e-4, device=None):
+def train_siren(model, dataloader, total_steps=5000, steps_til_summary=250, lr=1e-4, device=None, H=256, W=256):
     """
     Train the Siren model.
 
@@ -228,6 +221,8 @@ def train_siren(model, dataloader, total_steps=5000, steps_til_summary=250, lr=1
         steps_til_summary (int): Steps between summaries.
         lr (float): Learning rate.
         device (torch.device): Device to use for training.
+        H (int): Height of the image.
+        W (int): Width of the image.
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -237,22 +232,36 @@ def train_siren(model, dataloader, total_steps=5000, steps_til_summary=250, lr=1
     model_input, ground_truth = next(iter(dataloader))
     model_input, ground_truth = model_input.to(device), ground_truth.to(device)
 
-    H, W = int(np.sqrt(len(ground_truth))), int(np.sqrt(len(ground_truth)))
+    # Remove batch dimension from ground_truth for reshaping
+    ground_truth = ground_truth.squeeze(0)  # Shape: [H*W, 3]
 
     for step in range(total_steps):
-        model_output, coords = model(model_input)
+        model_output, coords = model(model_input)  # model_output shape: [1, H*W, 3]
+        model_output = model_output.squeeze(0)  # Remove batch dimension, shape: [H*W, 3]
+
+        # Compute loss
         loss = ((model_output - ground_truth) ** 2).mean()
 
         if not step % steps_til_summary:
             print(f"Step {step}, Total loss {loss.item():0.6f}")
             with torch.no_grad():
-                output_view = model_output.view(H, W, 3)
+                # Reshape the model output to match the image dimensions
+                try:
+                    output_view = model_output.view(H, W, 3)  # Shape: [H, W, 3]
+                except RuntimeError:
+                    print(f"Reshaping failed. model_output shape: {model_output.shape}, expected: ({H}, {W}, 3)")
+                    continue
+
+                # Normalize and convert to uint8 for visualization
                 output_view = torch.clamp(output_view, -1, 1) * 0.5 + 0.5
                 output_view = (output_view * 255).to(torch.uint8).cpu().detach().numpy()
+
+                # Plot the reconstructed image
                 plt.imshow(output_view)
                 plt.axis("off")
                 plt.show()
 
+        # Backpropagation and optimization
         optim.zero_grad()
         loss.backward()
         optim.step()

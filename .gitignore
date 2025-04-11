@@ -170,3 +170,6 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+DIV2K_train_HR/
+DIV2K_train_LR_bicubic_X2/

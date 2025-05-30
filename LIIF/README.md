@@ -2,7 +2,7 @@
 
 A beautiful, user-friendly web interface for your trained LIIF super-resolution model. No command-line knowledge required!
 
-![Interface Preview]()
+<img width="1608" alt="Interface Preview" src="https://github.com/user-attachments/assets/de6c0736-eed0-4f94-a337-f75753fc10f8" />
 
 ## ✨ Features
 

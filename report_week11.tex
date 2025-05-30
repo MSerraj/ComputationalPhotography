@@ -1,0 +1,45 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{graphicx}
+\geometry{a4paper, margin=1in}
+
+\begin{document}
+
+\title{Continuous Image Super-Resolution: Work of the Week}
+\author{Martin Catheland}
+\date{8 Mai 2025}
+\maketitle
+
+This week, we implemented a Multi-Image LIIF-style approach using SIREN networks to learn representations that generalize to unseen images.
+
+\section{Implementation Progress}
+
+We developed a conditioned SIREN network that processes both coordinates and local patch information. The key innovations include:
+
+\begin{itemize}
+    \item SIREN architecture with sine activation layers
+    \item Patch-based conditioning with center pixel removal
+    \item Multi-image training pipeline using concatenated datasets
+\end{itemize}
+
+The model can now train on multiple images simultaneously and reconstruct both seen and unseen test images.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8\textwidth]{result_image.png}
+    \caption{Comparison of original test image (left) and model reconstruction (right)}
+    \label{fig:results}
+\end{figure}
+
+\section{Next Steps}
+
+Our next objectives are to:
+\begin{itemize}
+    \item Scale up training with more images
+    \item Test various patch sizes and architectures
+    \item Implement super-resolution with downsampled patches
+    \item Optimize for larger datasets
+\end{itemize}
+
+\end{document} 
